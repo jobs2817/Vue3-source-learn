@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    let activeEffect = null
+    const effectStack = []
+    const bucket = new WeakMap()
+
+    function reactive(target) {
+      const proxy = new Proxy(target, {
+        get(target, key) {
+          
+          if (activeEffect) {
+            track(target, key)
+          }
+
+          return target[key]
+        },
+        set(target, key, newVal) {
+          const res = Reflect.set(target, key, newVal)
+
+          trigger(target, key)
+          return res
+        },
+        deleteProperty(target, key) {
+          console.log('del-----')
+        }
+      })
+
+      return proxy
+    }
+
+    function track(target, key) {
+      let weakMap = bucket.get(target)
+
+      if (!weakMap) {
+        bucket.set(target, weakMap = new Map())
+      }
+
+      let depSet = weakMap.get(key)
+      if (!depSet) {
+        weakMap.set(key, depSet = new Set())
+      }
+
+      depSet.add(activeEffect)
+      activeEffect.deps.push(depSet)
+    }
+
+    function trigger(target, key) {
+      const depsMap = bucket.get(target) || new Map()
+      if (!depsMap) return
+      const effects = depsMap.get(key) || new Set()
+      const copyEffects = new Set()
+
+      effects.forEach(effect => {
+        if (activeEffect !== effect) {
+          copyEffects.add(effect)
+        }
+      })
+      copyEffects.forEach(fn => {
+        if (fn.option.scheduler) {
+          fn.option.scheduler(fn)
+        } else {
+          fn()
+        }
+      })
+    }
+
+    function effect(fn, options) {
+      const effectFn = () => {
+        cleanup(effectFn)
+        activeEffect = effectFn
+        effectStack.push(effectFn)
+        const res = fn()
+        effectStack.pop()
+        activeEffect = effectStack[effectStack.length - 1]
+        return res
+      }
+      effectFn.option = options
+      effectFn.deps = []
+
+      if (!effectFn.option.lazy) {
+        effectFn()
+      }
+      return effectFn
+    }
+
+    function cleanup(effectFn) {
+      for (let i = 0; i < effectFn.deps.length; i++) {
+        const deps = effectFn.deps[i]
+        deps.delete(effectFn)
+      }
+
+      effectFn.deps.length = 0
+    }
+
+  
+    let effectQueue = new Set()
+
+    const p = Promise.resolve()
+    let flushing = true
+
+    function flushJob() {
+
+      if (!flushing) return
+      flushing = false
+
+      p.then(res => {
+        effectQueue.forEach(fn => fn())
+      }).finally(() => {
+        flushing = true
+      })
+    }
+
+    // 计算属性
+    function computed(fn) {
+      let value
+      let dirty = true
+      const effectFn = effect(fn, { 
+        lazy: true,
+        scheduler() {
+          dirty = true
+        } 
+      })
+      
+      const obj = {
+        get value() {
+          if (dirty) {
+            value = effectFn()
+            dirty = false
+          }
+
+          return value
+        }
+      }
+
+      return obj
+    }
+
+    // effect(() => {
+    //   console.log(state.a)
+    // }, { scheduler(fn) {
+    //   // setTimeout(fn, 1000)
+    //   effectQueue.add(fn)
+    //   flushJob()
+    // } })
+
+    const state = reactive({a: 1, b: 2})
+
+    const res = computed(() => {
+      console.log(111);
+      return state.a + state.b
+    })
+
+    console.log(res.value, 'resres');
+    // state.a++
+    console.log(res.value, 'resres');
+
+
+    // state.a++
+
+  </script>
+</body>
+</html>
